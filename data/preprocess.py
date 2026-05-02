@@ -154,6 +154,8 @@ def get_data(
     with_eda: bool = False,
     eda_output_dir: str | Path = "results",
     verbose: bool = False,
+    return_train_prior: bool = False,
+    return_validation: bool = False,
 ):
     """
     Returns X_train, X_test, y_train, y_test as contiguous float64 numpy arrays.
@@ -171,26 +173,47 @@ def get_data(
     X = df.drop("income", axis=1)
     y = df["income"]
 
-    X_train, X_test, y_train, y_test = train_test_split(
+    X_fit, X_test, y_fit, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y
     )
+    X_train_raw, X_val, y_train_raw, y_val = train_test_split(
+        X_fit, y_fit, test_size=0.2, random_state=42, stratify=y_fit
+    )
+    train_positive_prior = float(y_train_raw.mean())
 
     if verbose:
-        print("Train:", X_train.shape)
+        print("Train(raw):", X_train_raw.shape)
+        print("Val      :", X_val.shape)
         print("Test :", X_test.shape)
         print("-" * 44)
 
     smote = SMOTE(random_state=42)
-    X_train, y_train = smote.fit_resample(X_train, y_train)
+    X_train, y_train = smote.fit_resample(X_train_raw, y_train_raw)
 
     if verbose:
         print("Train apres SMOTE:", pd.Series(y_train).value_counts().to_dict())
         print("X_train shape:", X_train.shape)
 
     X_train_np = np.ascontiguousarray(X_train.to_numpy(dtype=np.float64), dtype=np.float64)
+    X_val_np = np.ascontiguousarray(X_val.to_numpy(dtype=np.float64), dtype=np.float64)
     X_test_np = np.ascontiguousarray(X_test.to_numpy(dtype=np.float64), dtype=np.float64)
     y_train_np = np.ascontiguousarray(np.asarray(y_train, dtype=np.float64), dtype=np.float64)
+    y_val_np = np.ascontiguousarray(np.asarray(y_val, dtype=np.float64), dtype=np.float64)
     y_test_np = np.ascontiguousarray(np.asarray(y_test, dtype=np.float64), dtype=np.float64)
+    if return_validation and return_train_prior:
+        return (
+            X_train_np,
+            X_val_np,
+            X_test_np,
+            y_train_np,
+            y_val_np,
+            y_test_np,
+            train_positive_prior,
+        )
+    if return_validation:
+        return X_train_np, X_val_np, X_test_np, y_train_np, y_val_np, y_test_np
+    if return_train_prior:
+        return X_train_np, X_test_np, y_train_np, y_test_np, train_positive_prior
     return X_train_np, X_test_np, y_train_np, y_test_np
 
 

@@ -100,11 +100,23 @@ def compute_accuracy(y_pred_proba, y_true):
     return np.mean((y_pred_proba >= 0.5).astype(np.int32) == y_true.astype(np.int32))
 
 
+def tune_threshold(y_pred_proba, y_true):
+    thresholds = np.linspace(0.0, 1.0, 1001, dtype=np.float64)
+    y_true_i = y_true.astype(np.int32)
+    best_acc, best_th = -1.0, 0.5
+    for th in thresholds:
+        acc = np.mean((y_pred_proba >= th).astype(np.int32) == y_true_i)
+        if acc > best_acc:
+            best_acc = float(acc)
+            best_th = float(th)
+    return best_th, best_acc
+
+
 def main():
     lib = load_library()
     set_signatures(lib)
 
-    X_train, X_test, y_train, y_test = get_data()
+    X_train, X_val, X_test, y_train, y_val, y_test = get_data(return_validation=True)
     n_samples, n_input = X_train.shape
     n_h1, n_h2 = 64, 32
     n_epochs, batch_size, lr = 20, 64, 0.01
@@ -117,6 +129,8 @@ def main():
     y_train = np.ascontiguousarray(y_train, dtype=np.float64)
     y_tr_ptr = y_train.ctypes.data_as(dbl_p)
 
+    X_val = np.ascontiguousarray(X_val, dtype=np.float64)
+    y_val = np.ascontiguousarray(y_val, dtype=np.float64)
     X_test = np.ascontiguousarray(X_test, dtype=np.float64)
     y_test = np.ascontiguousarray(y_test, dtype=np.float64)
 
@@ -161,20 +175,45 @@ def main():
             y_pred.ctypes.data_as(dbl_p),
         )
 
-        acc = compute_accuracy(y_pred, y_test)
+        y_val_pred = np.zeros(len(y_val), dtype=np.float64)
+        lib.predict(
+            X_val.ctypes.data_as(dbl_p),
+            ctypes.c_int(len(y_val)),
+            ctypes.c_int(n_input),
+            W1.ctypes.data_as(dbl_p),
+            b1.ctypes.data_as(dbl_p),
+            W2.ctypes.data_as(dbl_p),
+            b2.ctypes.data_as(dbl_p),
+            W3.ctypes.data_as(dbl_p),
+            b3.ctypes.data_as(dbl_p),
+            ctypes.c_int(n_h1),
+            ctypes.c_int(n_h2),
+            y_val_pred.ctypes.data_as(dbl_p),
+        )
+
+        best_threshold, val_acc = tune_threshold(y_val_pred, y_val)
+        raw_acc = compute_accuracy(y_pred, y_test)
+        tuned_acc = np.mean((y_pred >= best_threshold).astype(np.int32) == y_test.astype(np.int32))
 
         if baseline_time is None:
             baseline_time = elapsed
         speedup = baseline_time / elapsed
 
-        print(f"  Time: {elapsed:.2f}s | Speedup: {speedup:.2f}x | Accuracy: {acc:.4f}")
+        print(
+            f"  Time: {elapsed:.2f}s | Speedup: {speedup:.2f}x | "
+            f" Accuracy: {val_acc:.4f}"
+            
+        )
         benchmark_rows.append(
             {
                 "n_threads": n_threads,
                 "total_time_s": round(elapsed, 3),
                 "time_per_epoch_s": round(elapsed / n_epochs, 3),
                 "speedup": round(speedup, 3),
-                "accuracy": round(float(acc), 4),
+                "threshold_best_on_val": round(float(best_threshold), 4),
+                "val_accuracy": round(float(val_acc), 4),
+                "test_accuracy_at_0_5": round(float(raw_acc), 4),
+                "test_accuracy_tuned": round(float(tuned_acc), 4),
             }
         )
 
